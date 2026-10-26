@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#465cf5">
+<title>집중ON | 유튜브 학습 도우미</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===================== 로그인 화면 ===================== -->
+<section id="authView" class="auth" hidden>
+  <div class="auth-card">
+    <div class="brand big">집중<span>ON</span></div>
+    <p class="muted">영상은 보고, 배운 건 기억하고.</p>
+    <div class="tabs" role="tablist">
+      <button class="tab on" id="tabLogin" type="button" role="tab">로그인</button>
+      <button class="tab" id="tabSignup" type="button" role="tab">회원가입</button>
+    </div>
+    <form id="authForm" novalidate>
+      <label class="label" for="authUser">아이디</label>
+      <input id="authUser" autocomplete="username" placeholder="영문, 숫자 2~20자" autocapitalize="none" spellcheck="false" required>
+      <div id="nameRow" hidden>
+        <label class="label" for="authName">이름</label>
+        <input id="authName" autocomplete="name" placeholder="화면에 보일 이름">
+      </div>
+      <label class="label" for="authPass">비밀번호</label>
+      <input id="authPass" type="password" autocomplete="current-password" placeholder="4자 이상" required>
+      <p class="error" id="authError" role="alert"></p>
+      <button class="primary full mt" id="authSubmit" type="submit">로그인</button>
+    </form>
+  </div>
+</section>
+
+<!-- ===================== 앱 화면 ===================== -->
+<div id="appView" hidden>
+<header class="topbar">
+  <div class="wrap nav">
+    <div class="brand">집중<span>ON</span></div>
+    <nav class="views" aria-label="화면 선택">
+      <button class="view-btn on" id="navStudy" type="button">학습하기</button>
+      <button class="view-btn" id="navManage" type="button">퀴즈 관리</button>
+    </nav>
+    <div class="who">
+      <span class="tag" id="userTag"></span>
+      <button class="secondary btn-sm" id="logoutBtn" type="button">로그아웃</button>
+    </div>
+  </div>
+</header>
+
+<!-- ---------- 학습하기 ---------- -->
+<main class="wrap" id="studyView">
+  <section class="intro">
+    <div>
+      <h1>영상은 보고, 배운 건 기억하고.</h1>
+      <p>보는 중엔 집중 미션, 다 보면 요약과 OX 퀴즈, 틀린 건 다음 학습 전에 다시.</p>
+    </div>
+    <span class="status" id="sessionStatus">학습 시작 전</span>
+  </section>
+
+  <div class="layout">
+    <div class="col">
+      <section class="card">
+        <h2><span class="step">1</span>학습할 영상</h2>
+        <div class="seg" role="tablist">
+          <button class="seg-btn on" id="srcYt" type="button">유튜브 링크</button>
+          <button class="seg-btn" id="srcFile" type="button">내 영상 파일</button>
+        </div>
+
+        <form id="videoForm" class="fieldrow mt">
+          <input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." aria-label="유튜브 주소" required>
+          <button class="primary" type="submit" id="loadBtn">불러오기</button>
+        </form>
+
+        <div id="fileBox" class="mt" hidden>
+          <label class="filepick" for="videoFile">
+            <b>영상 파일 고르기</b>
+            <span>컴퓨터나 휴대폰에 저장된 영상(mp4 등)을 골라 줘. 파일은 어디에도 올라가지 않고 이 기기에서만 재생돼.</span>
+          </label>
+          <input id="videoFile" type="file" accept="video/*" class="sr-only">
+        </div>
+
+        <p class="error" id="videoError" role="alert"></p>
+        <div class="player-shell">
+          <div id="ytHost"><div id="player"></div></div>
+          <video id="localVideo" playsinline preload="metadata" hidden></video>
+          <div class="empty" id="playerEmpty"><b>영상이 여기에 표시돼</b>유튜브 주소를 넣거나 영상 파일을 골라 줘.</div>
+          <div class="lock" id="lockCover" hidden>
+            <div class="lock-icon">🔒</div>
+            <b>학습 시작을 눌러야 영상이 재생돼</b>
+            <span>집중 미션과 함께 영상을 볼 수 있어.</span>
+          </div>
+        </div>
+        <div class="rowbetween mt">
+          <span class="muted ellipsis" id="videoTitle">영상이 선택되지 않았어.</span>
+          <div class="btns">
+            <button class="primary" id="startBtn" disabled>학습 시작</button>
+            <button class="secondary" id="endBtn" disabled>학습 끝내기</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="rowbetween"><h2><span class="step">2</span>집중 상태</h2><span class="muted small">영상이 재생될 때만 시간이 흘러가.</span></div>
+        <div class="stats">
+          <div class="stat"><span>시청 시간</span><strong id="watchTime">00:00</strong></div>
+          <div class="stat"><span>다음 미션까지</span><strong id="nextMission">--:--</strong></div>
+          <div class="stat"><span>미션 성공</span><strong id="successCount">0</strong></div>
+          <div class="stat"><span>남은 기회</span><strong id="lives" class="lives">-</strong></div>
+        </div>
+        <p class="notice mt" id="sessionNotice">학습을 시작하면 정해진 간격마다 집중 미션이 나와. 미션을 계속 놓치면 학습이 강제 종료돼.</p>
+      </section>
+
+      <section class="card" id="quizCard" hidden>
+        <div class="rowbetween">
+          <h2><span class="step">3</span>요약과 OX 퀴즈</h2>
+          <button class="secondary btn-sm" id="editPackBtn" type="button" hidden>문제 수정</button>
+        </div>
+        <div id="quizLoading" class="loading" hidden><span class="spinner"></span>요약과 퀴즈를 불러오는 중이야…</div>
+        <div id="noPackBox" hidden>
+          <p class="notice warn">이 영상에는 아직 등록된 요약과 퀴즈가 없어. 지금 만들어 두면 다음부터 자동으로 나와.</p>
+          <button class="primary full mt" id="makePackBtn" type="button">요약과 퀴즈 만들기</button>
+        </div>
+        <div id="summaryBox" hidden>
+          <h3>영상 요약</h3>
+          <p class="summary" id="summaryText"></p>
+          <h3>핵심 내용</h3>
+          <ul class="points" id="keyPoints"></ul>
+          <h3 class="mt">OX 퀴즈</h3>
+          <div id="quizList"></div>
+          <button class="primary full" id="gradeBtn">채점하기</button>
+          <div id="quizResult" class="mt"></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="col">
+      <section class="card">
+        <h2>학습 설정</h2>
+        <label class="label" for="setInterval">미션 간격</label>
+        <select id="setInterval">
+          <option value="20">약 20초마다 (발표 시연용)</option>
+          <option value="60">약 1분마다</option>
+          <option value="180">약 3분마다</option>
+          <option value="300">약 5분마다</option>
+          <option value="600">약 10분마다</option>
+        </select>
+        <label class="label" for="setTimeLimit">미션 제한 시간</label>
+        <select id="setTimeLimit">
+          <option value="10">10초</option>
+          <option value="15">15초</option>
+          <option value="20">20초</option>
+        </select>
+        <label class="label" for="setMaxFails">강제 종료 기준 (실패 누적)</label>
+        <select id="setMaxFails">
+          <option value="2">2회 실패 시</option>
+          <option value="3">3회 실패 시</option>
+          <option value="5">5회 실패 시</option>
+        </select>
+        <label class="check"><input type="checkbox" id="setPause"> 미션이 나오면 영상 일시정지</label>
+        <label class="check"><input type="checkbox" id="setSound"> 미션 알림음</label>
+      </section>
+
+      <section class="card">
+        <div class="rowbetween"><h2>복습할 오답</h2><span class="status warn" id="reviewBadge">0개</span></div>
+        <div id="reviewList"><p class="muted small">아직 저장된 오답이 없어.</p></div>
+      </section>
+
+      <section class="card">
+        <h2>내 학습 기록</h2>
+        <div id="historyList"><p class="muted small">아직 기록이 없어.</p></div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<!-- ---------- 퀴즈 관리 ---------- -->
+<main class="wrap" id="manageView" hidden>
+  <section class="intro">
+    <div>
+      <h1>퀴즈 관리</h1>
+      <p>영상마다 요약과 OX 문제를 미리 만들어 둬. 학습이 끝나면 여기서 만든 퀴즈가 나와.</p>
+    </div>
+  </section>
+  <div class="layout">
+    <div class="col">
+      <section class="card">
+        <div class="rowbetween"><h2>등록된 퀴즈</h2><span class="status" id="packCount">0개</span></div>
+        <div id="packList"><p class="muted small">아직 등록된 퀴즈가 없어. 오른쪽에서 새로 만들어 봐.</p></div>
+      </section>
+    </div>
+    <aside class="col">
+      <section class="card">
+        <h2>새 퀴즈 만들기</h2>
+        <label class="label" for="newUrl">유튜브 영상이면 주소를 넣어 줘</label>
+        <form id="newYtForm" class="fieldrow">
+          <input id="newUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required>
+          <button class="primary" type="submit">만들기</button>
+        </form>
+        <p class="label">내 영상 파일이면 같은 파일을 골라 줘</p>
+        <label class="filepick small-pick" for="newFile"><b>영상 파일 고르기</b><span>파일 이름과 크기로 영상을 구분해.</span></label>
+        <input id="newFile" type="file" accept="video/*" class="sr-only">
+        <p class="error" id="newError" role="alert"></p>
+      </section>
+      <section class="card">
+        <h2>퀴즈 옮기기</h2>
+        <p class="muted small nomargin">퀴즈는 이 기기에만 저장돼. 다른 기기에서도 쓰려면 파일로 내보낸 뒤, 그 기기에서 가져오기를 해 줘.</p>
+        <div class="btns mt">
+          <button class="secondary" id="exportBtn" type="button">퀴즈 파일로 내보내기</button>
+          <label class="secondary btnlike" for="importFile">퀴즈 파일 가져오기</label>
+          <input id="importFile" type="file" accept=".json,application/json" class="sr-only">
+        </div>
+        <p class="notice mt" id="moveMsg" hidden></p>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<footer>집중ON · 학습을 돕는 도구이지, 실제 집중 상태를 진단하는 도구는 아니야.</footer>
+</div>
+
+<!-- ===================== 창(모달) ===================== -->
+<!-- 요약·퀴즈 편집 -->
+<div class="overlay" id="editorOverlay" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+    <div class="rowbetween">
+      <h2 id="editorTitle">요약과 퀴즈 만들기</h2>
+      <button class="secondary btn-sm" id="closeEditorBtn" type="button">닫기</button>
+    </div>
+    <p class="muted small ellipsis" id="editorVideo"></p>
+    <label for="edTitle" class="label">영상 제목</label>
+    <input id="edTitle" placeholder="목록에 보일 제목">
+    <label for="edSummary" class="label">영상 요약</label>
+    <textarea id="edSummary" rows="4" placeholder="영상 전체 내용을 3~5문장으로 정리해 줘."></textarea>
+    <label for="edPoints" class="label">핵심 내용 (한 줄에 하나씩)</label>
+    <textarea id="edPoints" rows="3" placeholder="예) 광합성은 엽록체에서 일어난다"></textarea>
+    <div class="rowbetween mt"><h3 class="nomargin">OX 문제 (최대 10개)</h3><button class="secondary btn-sm" id="addQBtn" type="button">문제 추가</button></div>
+    <div id="edQuestions" class="mt"></div>
+    <p class="error" id="editorError" role="alert"></p>
+    <div class="btns end">
+      <button class="primary" id="savePackBtn" type="button">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 집중 미션 -->
+<div class="overlay" id="missionOverlay" hidden>
+  <div class="modal mission" role="dialog" aria-modal="true" aria-labelledby="missionPrompt">
+    <div class="rowbetween">
+      <span class="pill" id="missionLabel">집중 미션</span>
+      <span class="timer" id="missionTimer">10</span>
+    </div>
+    <div class="timebar"><i id="timebar"></i></div>
+    <p class="mission-text" id="missionPrompt"></p>
+    <div id="missionArea"></div>
+    <p class="mission-msg" id="missionMsg"></p>
+  </div>
+</div>
+
+<!-- 지난 오답 경고 -->
+<div class="overlay" id="reviewOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+    <p class="pill warn">⚠ 경고</p>
+    <h2 id="reviewTitle">지난 학습에서 틀린 문제가 <span id="reviewCount">0</span>개 있어!</h2>
+    <p class="muted">새 영상을 보기 전에 정답과 이유를 확인하고 넘어가자.</p>
+    <div id="reviewModalList" class="review-modal-list"></div>
+    <div class="btns end mt">
+      <button class="secondary" id="skipReviewBtn">다음에 복습하기</button>
+      <button class="primary" id="doneReviewBtn" disabled>복습 완료하고 시작</button>
+    </div>
+  </div>
+</div>
+
+<!-- 강제 종료 -->
+<div class="overlay dark" id="quitOverlay" hidden>
+  <div class="modal quit" role="alertdialog" aria-modal="true" aria-labelledby="quitTitle">
+    <div class="quit-icon">⏻</div>
+    <h2 id="quitTitle">집중 미션을 <span id="quitFails">3</span>번 놓쳤어</h2>
+    <p id="quitText">졸음이나 멍때림이 의심돼서 학습을 종료할게. <b id="quitCount">5</b>초 후 종료돼.</p>
+    <button class="primary" id="quitHomeBtn" hidden>잠깐 쉬고 처음 화면으로</button>
+  </div>
+</div>
+
+<script src="localdb.js"></script>
+<script src="app.js"></script>
+<script src="https://www.youtube.com/iframe_api" async></script>
+</body>
+</html>
