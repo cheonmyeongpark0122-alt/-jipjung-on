@@ -40,6 +40,7 @@
     <div class="brand">집중<span>ON</span></div>
     <nav class="views" aria-label="화면 선택">
       <button class="view-btn on" id="navStudy" type="button">학습하기</button>
+      <button class="view-btn" id="navReport" type="button">학습 현황</button>
       <button class="view-btn" id="navManage" type="button">퀴즈 관리</button>
     </nav>
     <div class="who">
@@ -119,8 +120,10 @@
         </div>
         <div id="quizLoading" class="loading" hidden><span class="spinner"></span>요약과 퀴즈를 불러오는 중이야…</div>
         <div id="noPackBox" hidden>
-          <p class="notice warn">이 영상에는 아직 등록된 요약과 퀴즈가 없어. 지금 만들어 두면 다음부터 자동으로 나와.</p>
-          <button class="primary full mt" id="makePackBtn" type="button">요약과 퀴즈 만들기</button>
+          <p class="notice warn">이 영상과 연결된 퀴즈를 찾지 못했어. 아래 목록에서 풀 퀴즈를 고르거나, 새로 만들어 줘.</p>
+          <h3>등록된 퀴즈에서 고르기</h3>
+          <div id="pickList"></div>
+          <button class="secondary full mt" id="makePackBtn" type="button">이 영상의 퀴즈 새로 만들기</button>
         </div>
         <div id="summaryBox" hidden>
           <h3>영상 요약</h3>
@@ -136,6 +139,12 @@
     </div>
 
     <aside class="col">
+      <section class="card">
+        <div class="rowbetween"><h2>추천 영상</h2><span class="status">내 기록 분석</span></div>
+        <p class="muted small nomargin">오답, 집중도, 퀴즈 점수를 바탕으로 지금 보면 좋은 영상을 골랐어.</p>
+        <div id="recoList" class="mt"><p class="muted small">추천할 영상이 아직 없어. 퀴즈 관리에서 영상을 등록해 줘.</p></div>
+      </section>
+
       <section class="card">
         <h2>학습 설정</h2>
         <label class="label" for="setInterval">미션 간격</label>
@@ -170,6 +179,66 @@
       <section class="card">
         <h2>내 학습 기록</h2>
         <div id="historyList"><p class="muted small">아직 기록이 없어.</p></div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<!-- ---------- 학습 현황 ---------- -->
+<main class="wrap" id="reportView" hidden>
+  <section class="intro">
+    <div>
+      <h1>학습 현황</h1>
+      <p>지금까지의 학습 시간, 집중도, 퀴즈 결과를 한눈에 볼 수 있어. 보호자는 구글 시트 링크로 같은 기록을 볼 수 있어.</p>
+    </div>
+    <span class="status" id="rpMade"></span>
+  </section>
+  <div class="layout">
+    <div class="col">
+      <section class="card">
+        <h2>한눈에 보기</h2>
+        <div class="tiles" id="rpTiles"></div>
+        <p class="notice mt" id="rpComment"></p>
+      </section>
+      <section class="card">
+        <h2>최근 7일 학습 시간</h2>
+        <div class="bars" id="rpDays"></div>
+      </section>
+      <section class="card">
+        <h2>최근 학습</h2>
+        <div id="rpRecent"></div>
+      </section>
+      <section class="card">
+        <h2>최근 퀴즈</h2>
+        <div id="rpQuiz"></div>
+      </section>
+    </div>
+    <aside class="col">
+      <section class="card">
+        <div class="rowbetween"><h2>보호자 연결</h2><span class="status" id="sheetState">연결 안 됨</span></div>
+        <p class="muted small nomargin">학습을 끝내거나 퀴즈를 채점하면 기록이 구글 시트로 자동 전송돼. 보호자에게 아래 링크를 보내면 이 학생의 기록만 볼 수 있어.</p>
+        <label class="label" for="guardianLink">보호자 링크</label>
+        <input id="guardianLink" readonly>
+        <div class="btns mt">
+          <button class="primary btn-sm" id="copyLinkBtn" type="button">링크 복사</button>
+          <button class="secondary btn-sm" id="shareLinkBtn" type="button">링크 보내기</button>
+        </div>
+        <p class="muted small">보호자 코드: <b id="guardianCode">-</b> (링크에 들어 있어서 따로 알려 줄 필요는 없어)</p>
+        <p class="notice" id="linkMsg" hidden></p>
+      </section>
+      <section class="card">
+        <h2>남은 오답</h2>
+        <div id="rpWrong"></div>
+      </section>
+      <section class="card">
+        <h2>구글 시트 설정</h2>
+        <label class="label" for="sheetUrlInput">구글 시트 연결 주소 (앱스 스크립트 웹 앱 주소)</label>
+        <input id="sheetUrlInput" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="none" spellcheck="false">
+        <div class="btns mt">
+          <button class="secondary btn-sm" id="saveSheetBtn" type="button">주소 저장</button>
+          <button class="secondary btn-sm" id="resendBtn" type="button">지금까지 기록 모두 보내기</button>
+        </div>
+        <p class="notice mt" id="sheetMsg" hidden></p>
       </section>
     </aside>
   </div>
@@ -282,6 +351,7 @@
   </div>
 </div>
 
+<script src="config.js"></script>
 <script src="localdb.js"></script>
 <script src="app.js"></script>
 <script src="https://www.youtube.com/iframe_api" async></script>

@@ -171,12 +171,34 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .chip.base{background:var(--green-soft);color:var(--green)}
 .modal.wide{width:min(720px,100%)}
 
+/* 학습 현황 */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{background:#f6f7fb;border-radius:12px;padding:12px}
+.tile span{display:block;font-size:11px;color:var(--muted)}
+.tile strong{font-size:22px;font-variant-numeric:tabular-nums}
+.tile small{display:block;font-size:11px;color:var(--muted)}
+.bars{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;align-items:end;height:150px;padding-top:6px}
+.bar{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
+.bar i{display:block;width:70%;max-width:34px;background:var(--primary);border-radius:6px 6px 2px 2px;min-height:3px}
+.bar i.zero{background:#dfe3ef}
+.bar b{font-size:11px;font-variant-numeric:tabular-nums}
+.bar span{font-size:11px;color:var(--muted)}
+/* 추천 영상 */
+.reco{padding:12px 0;border-bottom:1px solid var(--line);display:grid;gap:6px}
+.reco:last-child{border-bottom:0}
+.reco .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.reco .top b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.score{font-size:12px;font-weight:800;color:var(--primary);white-space:nowrap}
+.meter{height:6px;background:var(--primary-soft);border-radius:4px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--primary)}
+.reco ul{margin:0;padding-left:18px;font-size:12px;color:var(--muted)}
 footer{text-align:center;color:#8790a1;font-size:12px;padding:0 20px 30px}
 
 @media (max-width:820px){
   .layout{grid-template-columns:1fr}
   .intro{flex-direction:column;align-items:flex-start}
   .stats{grid-template-columns:repeat(2,1fr)}
+  .tiles{grid-template-columns:repeat(2,1fr)}
   .nav{flex-wrap:wrap}
   .views{order:3;width:100%}
   .view-btn{flex:1}

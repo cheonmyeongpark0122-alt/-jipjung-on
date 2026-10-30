@@ -32,9 +32,11 @@
         hidden: db.hidden || [],      // 지운 기본 퀴즈
         wrong: db.wrong || [],
         sessions: db.sessions || [],
+        quizlog: db.quizlog || [],    // 퀴즈 채점 기록 (정답률 계산용)
+        outbox: db.outbox || [],      // 구글 시트로 아직 못 보낸 기록
       };
     } catch {
-      return { users: [], current: null, packs: {}, hidden: [], wrong: [], sessions: [] };
+      return { users: [], current: null, packs: {}, hidden: [], wrong: [], sessions: [], quizlog: [], outbox: [] };
     }
   }
   function save(db) {
@@ -54,6 +56,13 @@
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619) >>> 0;
     return 'f' + h.toString(16);
+  }
+  // 보호자 코드: 보호자 링크에 들어가는 6자리 코드 (헷갈리는 글자 0,O,1,I 제외)
+  function newCode() {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let c = '';
+    for (let i = 0; i < 6; i++) c += abc[Math.floor(Math.random() * abc.length)];
+    return c;
   }
   const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name });
 
@@ -123,7 +132,7 @@
         if (password.length < 4) throw fail(400, 'BAD_PASSWORD', '비밀번호는 4자 이상으로 만들어 줘.');
         if (db.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) throw fail(409, 'TAKEN', '이미 있는 아이디야. 다른 아이디를 써 줘.');
         const salt = uid();
-        const u = { id: uid(), username, name, salt, hash: await hash(salt + password), createdAt: now() };
+        const u = { id: uid(), username, name, salt, hash: await hash(salt + password), code: newCode(), createdAt: now() };
         db.users.push(u); db.current = u.id; save(db);
         return { user: publicUser(u) };
       }
@@ -202,11 +211,191 @@
         result: ['완주', '중간 종료', '강제 종료'].includes(body.result) ? body.result : '중간 종료', endedAt: now(),
       });
       db.sessions = db.sessions.slice(0, 200);
+      queueRow(db, me, sessionRow(db, me, db.sessions[0]));
       save(db);
+      flushSheet();
       return { ok: true };
     }
 
+    if (seg[0] === 'quizlog') {
+      db.quizlog.unshift({
+        id: uid(), userId: me.id, videoId: str(body.videoId, 40), videoTitle: str(body.videoTitle, 200),
+        total: Number(body.total) || 0, correct: Number(body.correct) || 0, at: now(),
+      });
+      db.quizlog = db.quizlog.slice(0, 300);
+      queueRow(db, me, quizRow(db, me, db.quizlog[0]));
+      save(db);
+      flushSheet();
+      return { ok: true };
+    }
+
+    if (seg[0] === 'report') {
+      if (!me.code) { me.code = newCode(); save(db); }
+      return { ...buildReport(db, me), username: me.username, code: me.code, sheetUrl: sheetUrl(), pending: db.outbox.length };
+    }
+    if (seg[0] === 'sheet') {
+      if (seg[1] === 'url') { setSheetUrl(String(body.url || '')); flushSheet(); return { sheetUrl: sheetUrl() }; }
+      if (seg[1] === 'resend') {
+        // 지금까지의 기록을 모두 다시 보냄 (시트에서 같은 기록ID는 한 번만 저장됨)
+        if (!me.code) me.code = newCode();
+        const rows = [
+          ...db.sessions.filter((x) => x.userId === me.id).map((x) => sessionRow(db, me, x)),
+          ...db.quizlog.filter((x) => x.userId === me.id && x.id).map((x) => quizRow(db, me, x)),
+        ];
+        rows.forEach((r) => queueRow(db, me, r));
+        save(db);
+        const sent = await flushSheet();
+        return { count: rows.length, sent };
+      }
+    }
+    if (seg[0] === 'recommend') return { items: buildRecommend(db, me) };
+
     throw fail(404, 'NOT_FOUND', '알 수 없는 요청이야.');
+  }
+
+  /* ----- 구글 시트로 기록 보내기 -----
+   * 시트 주소(구글 앱스 스크립트 웹 앱 주소)는 config.js 에 적거나, 앱의 학습 현황 화면에서 넣는다.
+   * 인터넷이 끊겨 못 보낸 기록은 outbox 에 모아 두었다가 다음에 다시 보낸다.
+   */
+  const SHEET_KEY = 'jipjungon_sheet_url';
+  function sheetUrl() {
+    const fromConfig = (window.JIPJUNG_CONFIG && window.JIPJUNG_CONFIG.sheetUrl) || '';
+    if (fromConfig) return fromConfig;
+    try { return localStorage.getItem(SHEET_KEY) || ''; } catch { return ''; }
+  }
+  function setSheetUrl(url) {
+    url = url.trim();
+    if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
+      throw fail(400, 'BAD_URL', '구글 앱스 스크립트 웹 앱 주소가 아니야. https://script.google.com/macros/s/…/exec 모양의 주소를 넣어 줘.');
+    }
+    try { if (url) localStorage.setItem(SHEET_KEY, url); else localStorage.removeItem(SHEET_KEY); } catch { /* 무시 */ }
+  }
+  function openWrong(db, me) { return db.wrong.filter((w) => w.userId === me.id && !w.reviewed).length; }
+  function sessionRow(db, me, x) {
+    return { id: x.id, at: x.endedAt, kind: '학습', title: x.videoTitle, min: Math.round(x.watchSec / 6) / 10,
+      success: x.success, missions: x.missions, result: x.result, correct: '', total: '', wrongOpen: openWrong(db, me) };
+  }
+  function quizRow(db, me, x) {
+    return { id: x.id, at: x.at, kind: '퀴즈', title: x.videoTitle, min: '', success: '', missions: '', result: '',
+      correct: x.correct, total: x.total, wrongOpen: openWrong(db, me) };
+  }
+  function queueRow(db, me, row) {
+    if (db.outbox.some((r) => r.id === row.id)) return;
+    db.outbox.push({ ...row, userId: me.username, name: me.name, code: me.code || '' });
+    db.outbox = db.outbox.slice(-500);
+  }
+  let flushing = null;
+  async function flushSheet() {
+    const url = sheetUrl();
+    if (!url) return 0;
+    if (flushing) return flushing;
+    flushing = (async () => {
+      const db = load();
+      if (!db.outbox.length) return 0;
+      const rows = db.outbox.slice(0, 100);
+      try {
+        // 구글 앱스 스크립트는 다른 사이트의 요청에 답을 돌려주지 않아서 no-cors 로 보낸다
+        await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ rows }) });
+      } catch {
+        return 0; // 인터넷 연결 안 됨 → 다음에 다시 보냄
+      }
+      const fresh = load();
+      const sentIds = new Set(rows.map((r) => r.id));
+      fresh.outbox = fresh.outbox.filter((r) => !sentIds.has(r.id));
+      save(fresh);
+      return rows.length;
+    })();
+    try { return await flushing; } finally { flushing = null; }
+  }
+
+  /* ----- 학습 현황 보고서 ----- */
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+  function dayKey(d) { const x = new Date(d); return `${x.getFullYear()}-${x.getMonth() + 1}-${x.getDate()}`; }
+
+  function buildReport(db, me) {
+    const sessions = db.sessions.filter((s) => s.userId === me.id);
+    const quizzes = db.quizlog.filter((q) => q.userId === me.id);
+    const wrongAll = db.wrong.filter((w) => w.userId === me.id);
+    const open = wrongAll.filter((w) => !w.reviewed);
+    const sum = (arr, f) => arr.reduce((a, x) => a + (Number(x[f]) || 0), 0);
+
+    // 최근 7일 하루별 학습 시간(분)
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+      const k = dayKey(d);
+      const sec = sessions.filter((s) => dayKey(s.endedAt) === k).reduce((a, s) => a + s.watchSec, 0);
+      days.push({ label: `${d.getMonth() + 1}/${d.getDate()}`, min: Math.round(sec / 60) });
+    }
+
+    return {
+      name: me.name,
+      madeAt: now(),
+      totals: {
+        watchSec: sum(sessions, 'watchSec'),
+        count: sessions.length,
+        done: sessions.filter((s) => s.result === '완주').length,
+        quit: sessions.filter((s) => s.result === '강제 종료').length,
+        missions: sum(sessions, 'missions'),
+        success: sum(sessions, 'success'),
+        focusRate: pct(sum(sessions, 'success'), sum(sessions, 'missions')),
+        quizCount: quizzes.length,
+        quizRate: pct(sum(quizzes, 'correct'), sum(quizzes, 'total')),
+        wrongTotal: wrongAll.length,
+        wrongOpen: open.length,
+      },
+      days,
+      recent: sessions.slice(0, 6).map((s) => ({ t: s.videoTitle, sec: s.watchSec, ok: s.success, m: s.missions, r: s.result, at: s.endedAt })),
+      quizRecent: quizzes.slice(0, 6).map((q) => ({ t: q.videoTitle, c: q.correct, n: q.total, at: q.at })),
+      wrongOpen: open.slice(0, 5).map((w) => ({ q: w.question, a: w.answer, t: w.videoTitle })),
+    };
+  }
+
+  /* ----- 추천 영상 (보여주기용 점수 모델) -----
+   * 실제 인공지능은 아니고, 학생 기록으로 점수를 매겨 순서를 정한다.
+   *  기본 40점
+   *  + 남은 오답 1개당 15점 (최대 30점)  : 복습이 필요한 영상
+   *  + 아직 학습하지 않은 영상 20점
+   *  + 지난번 강제 종료 / 미션 성공률 60% 미만 15점 : 집중이 부족했던 영상
+   *  + 지난 퀴즈 점수 70% 미만 10점
+   *  + 오답이 있는 영상과 제목 낱말이 겹치면 낱말당 5점 (최대 15점) : 비슷한 주제
+   *  - 퀴즈 만점 25점 : 이미 잘 아는 영상
+   */
+  const words = (t) => String(t || '').replace(/[^0-9A-Za-z가-힣\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 2 && !/^\d+부?$/.test(w));
+
+  function buildRecommend(db, me) {
+    const packs = allPacks(db);
+    const sessions = db.sessions.filter((s) => s.userId === me.id);
+    const quizzes = db.quizlog.filter((q) => q.userId === me.id);
+    const open = db.wrong.filter((w) => w.userId === me.id && !w.reviewed);
+    const weakWords = new Set(open.flatMap((w) => words(w.videoTitle)));
+
+    const out = [];
+    for (const [key, p] of Object.entries(packs)) {
+      let score = 40;
+      const reasons = [];
+      const wrongN = open.filter((w) => w.videoId === key).length;
+      const last = sessions.find((s) => s.videoId === key);
+      const lastQuiz = quizzes.find((q) => q.videoId === key);
+
+      if (wrongN) { score += Math.min(30, wrongN * 15); reasons.push(`틀린 문제 ${wrongN}개가 남아 있어 복습이 필요해요`); }
+      if (!last) { score += 20; reasons.push('아직 학습하지 않은 영상이에요'); }
+      else if (last.result === '강제 종료' || (last.missions && last.success / last.missions < 0.6)) {
+        score += 15; reasons.push('지난번 집중도가 낮았어요. 다시 집중해서 봐요');
+      }
+      if (lastQuiz && lastQuiz.total) {
+        const r = lastQuiz.correct / lastQuiz.total;
+        if (r < 0.7) { score += 10; reasons.push(`지난 퀴즈 점수가 ${Math.round(r * 100)}점이었어요`); }
+        if (r === 1) { score -= 25; reasons.push('지난 퀴즈를 모두 맞혔어요'); }
+      }
+      if (!wrongN && weakWords.size) {
+        const same = words(p.title).filter((w) => weakWords.has(w));
+        if (same.length) { score += Math.min(15, same.length * 5); reasons.push(`어려워했던 주제와 비슷해요 (${[...new Set(same)].slice(0, 2).join(', ')})`); }
+      }
+      if (!reasons.length) reasons.push('꾸준히 복습하면 오래 기억해요');
+      out.push({ key, title: p.title, type: p.type, score: Math.max(1, Math.min(99, score)), reasons });
+    }
+    return out.sort((a, b) => b.score - a.score).slice(0, 5);
   }
 
   /* ----- 퀴즈 파일 내보내기 / 가져오기 ----- */
@@ -234,5 +423,6 @@
   }
 
   window.localApi = localApi;
+  window.flushSheet = flushSheet;
   window.quizFile = { exportPacks, importPacks };
 })();

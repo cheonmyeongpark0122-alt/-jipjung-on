@@ -131,7 +131,9 @@ $('authForm').addEventListener('submit', async (e) => {
     $('authPass').value = '';
     enterApp(r.user);
   } catch (err) {
-    $('authError').textContent = err.message;
+    $('authError').textContent = err.code === 'BAD_LOGIN'
+      ? '아이디 또는 비밀번호가 맞지 않아. 이 기기에서 처음 쓰는 거라면 위쪽 [회원가입] 탭을 눌러 먼저 가입해 줘.'
+      : err.message;
   } finally {
     $('authSubmit').disabled = false;
   }
@@ -158,19 +160,25 @@ function enterApp(user) {
   showView('study');
   refreshReview();
   refreshHistory();
+  window.flushSheet?.();
 }
 
 /* ---------- 화면 전환: 학습하기 / 퀴즈 관리 ---------- */
 function showView(name) {
-  if (name === 'manage' && state.session) { setNotice('학습 중에는 퀴즈 관리로 갈 수 없어. 먼저 학습을 끝내 줘.', 'warn'); return; }
+  if (name !== 'study' && state.session) { setNotice('학습 중에는 다른 화면으로 갈 수 없어. 먼저 학습을 끝내 줘.', 'warn'); return; }
   $('studyView').hidden = name !== 'study';
   $('manageView').hidden = name !== 'manage';
+  $('reportView').hidden = name !== 'report';
   $('navStudy').classList.toggle('on', name === 'study');
   $('navManage').classList.toggle('on', name === 'manage');
+  $('navReport').classList.toggle('on', name === 'report');
   if (name === 'manage') refreshPacks();
+  if (name === 'report') refreshReport();
+  if (name === 'study') refreshRecommend();
 }
 $('navStudy').addEventListener('click', () => showView('study'));
 $('navManage').addEventListener('click', () => showView('manage'));
+$('navReport').addEventListener('click', () => showView('report'));
 
 /* =====================================================
  *  1. 영상 플레이어 (유튜브 / 내 영상 파일을 같은 방식으로 다룸)
@@ -538,7 +546,7 @@ function saveSession(result) {
   api('/api/sessions', {
     method: 'POST',
     body: { videoId: state.video.key, videoTitle: state.video.title, watchSec: s.watchSec, missions: s.missions, success: s.success, fail: s.fail, result },
-  }).then(refreshHistory).catch(() => {});
+  }).then(() => { refreshHistory(); refreshRecommend(); }).catch(() => {});
 }
 
 /* =====================================================
@@ -559,10 +567,42 @@ async function loadPack() {
     state.pack = await api('/api/pack/' + state.video.key);
     renderPack();
   } catch {
+    await renderPickList();
     $('noPackBox').hidden = false;
   } finally {
     $('quizLoading').hidden = true;
   }
+}
+
+// 이 영상과 연결된 퀴즈가 없을 때: 등록된 퀴즈 목록에서 직접 골라 풀기
+async function renderPickList() {
+  const root = $('pickList');
+  root.innerHTML = '';
+  let items = [];
+  try { items = (await api('/api/packs')).items; } catch { /* 목록 없음 */ }
+  if (!items.length) {
+    root.append(el('p', 'muted small', '이 기기에 등록된 퀴즈가 없어. 퀴즈 관리에서 퀴즈 파일 가져오기를 하거나, 아래 버튼으로 새로 만들어 줘.'));
+    return;
+  }
+  items.forEach((p) => {
+    const row = el('div', 'pack');
+    const info = el('div', 'info');
+    const meta = el('small');
+    meta.append(el('span', 'chip' + (p.type === 'file' ? ' file' : ''), p.type === 'file' ? '내 파일' : '유튜브'));
+    meta.append(document.createTextNode(`OX ${p.count}문제`));
+    info.append(el('b', '', p.title), meta);
+    const go = el('button', 'primary btn-sm', '이 퀴즈 풀기');
+    go.type = 'button';
+    go.addEventListener('click', async () => {
+      try {
+        state.pack = await api('/api/pack/' + p.key);
+        renderPack();
+        $('summaryBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) { root.append(el('p', 'error', e.message)); }
+    });
+    row.append(info, go);
+    root.append(row);
+  });
 }
 $('makePackBtn').addEventListener('click', () => openEditor(state.video, null, (pack) => { state.pack = pack; renderPack(); }));
 $('editPackBtn').addEventListener('click', () => openEditor(state.video, state.pack, (pack) => { state.pack = pack; renderPack(); }));
@@ -624,6 +664,8 @@ $('gradeBtn').addEventListener('click', async () => {
     try { await api('/api/wrong', { method: 'POST', body: { items: wrong } }); } catch { /* 저장 실패 */ }
     refreshReview();
   }
+  try { await api('/api/quizlog', { method: 'POST', body: { videoId: state.video.key, videoTitle: state.video.title, total: p.quiz.length, correct } }); } catch { /* 저장 실패 */ }
+  refreshRecommend();
   $('quizResult').className = 'notice mt ' + (wrong.length ? 'warn' : 'good');
   $('quizResult').textContent = wrong.length
     ? `${p.quiz.length}문제 중 ${correct}개 맞혔어. 틀린 ${wrong.length}문제는 다음 학습을 시작할 때 다시 보여 줄게.`
@@ -811,6 +853,155 @@ $('importFile').addEventListener('change', async () => {
   } catch (e) {
     moveMsg(e instanceof SyntaxError ? '파일을 읽지 못했어. 집중ON에서 내보낸 quizzes.json 파일을 골라 줘.' : e.message, 'bad');
   }
+});
+
+/* =====================================================
+ *  7. 추천 영상 (기록을 바탕으로 점수를 매겨 보여 주는 모델)
+ * ===================================================== */
+async function refreshRecommend() {
+  let items = [];
+  try { items = (await api('/api/recommend')).items; } catch { return; }
+  const root = $('recoList');
+  root.innerHTML = '';
+  if (!items.length) { root.append(el('p', 'muted small', '추천할 영상이 아직 없어. 퀴즈 관리에서 영상을 등록해 줘.')); return; }
+  items.forEach((r, i) => {
+    const box = el('div', 'reco');
+    const top = el('div', 'top');
+    top.append(el('b', '', `${i + 1}. ${r.title}`), el('span', 'score', `추천도 ${r.score}%`));
+    const meter = el('div', 'meter'); const fill = el('i'); fill.style.width = r.score + '%'; meter.append(fill);
+    const ul = el('ul'); r.reasons.slice(0, 2).forEach((t) => ul.append(el('li', '', t)));
+    const go = el('button', 'secondary btn-sm', r.type === 'file' ? '이 영상 파일로 학습하기' : '이 영상 학습하기');
+    go.type = 'button';
+    go.addEventListener('click', () => {
+      if (state.session) { setNotice('학습 중이야. 지금 학습을 끝낸 다음 골라 줘.', 'warn'); return; }
+      if (r.type === 'file') {
+        setSource('file');
+        $('videoError').textContent = `"${r.title}" 영상 파일을 골라 줘.`;
+        $('fileBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      setSource('yt');
+      $('videoUrl').value = 'https://www.youtube.com/watch?v=' + r.key;
+      $('videoForm').requestSubmit();
+      $('videoForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    box.append(top, meter, ul, go);
+    root.append(box);
+  });
+}
+
+/* =====================================================
+ *  8. 학습 현황 + 보호자 연결(구글 시트)
+ * ===================================================== */
+const minText = (sec) => (sec >= 3600 ? `${Math.floor(sec / 3600)}시간 ${Math.round((sec % 3600) / 60)}분` : `${Math.round(sec / 60)}분`);
+const rateText = (v) => (v == null ? '-' : v + '%');
+const shortDate = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+function reportComment(t) {
+  if (!t.count) return '아직 학습 기록이 없어. 영상을 보고 퀴즈를 풀면 여기에 현황이 쌓여.';
+  const parts = [];
+  if (t.focusRate != null) parts.push(t.focusRate >= 80 ? '집중 미션을 잘 해내고 있어요.' : t.focusRate >= 50 ? '집중 미션 성공률이 보통이에요.' : '집중 미션을 자주 놓치고 있어요. 짧은 영상부터 시작해 보세요.');
+  if (t.quit) parts.push(`강제 종료가 ${t.quit}번 있었어요.`);
+  if (t.quizRate != null) parts.push(t.quizRate >= 80 ? '퀴즈 이해도가 높아요.' : '퀴즈 정답률을 높이려면 오답 복습이 필요해요.');
+  if (t.wrongOpen) parts.push(`아직 복습하지 않은 오답이 ${t.wrongOpen}개 있어요.`);
+  return parts.join(' ');
+}
+
+async function refreshReport() {
+  let r;
+  try { r = await api('/api/report'); } catch { return; }
+  const t = r.totals;
+  $('rpMade').textContent = `${r.name} · ${shortDate(r.madeAt)} 기준`;
+  const tiles = [
+    ['총 학습 시간', minText(t.watchSec), `${t.count}번 학습`],
+    ['집중 미션 성공률', rateText(t.focusRate), `${t.success}/${t.missions}회 성공`],
+    ['퀴즈 정답률', rateText(t.quizRate), `${t.quizCount}번 채점`],
+    ['영상 완주', `${t.done}번`, '끝까지 본 횟수'],
+    ['강제 종료', `${t.quit}번`, '미션 실패 누적'],
+    ['남은 오답', `${t.wrongOpen}개`, `지금까지 틀린 문제 ${t.wrongTotal}개`],
+  ];
+  $('rpTiles').innerHTML = '';
+  tiles.forEach(([a, b, c]) => { const d = el('div', 'tile'); d.append(el('span', '', a), el('strong', '', b), el('small', '', c)); $('rpTiles').append(d); });
+  $('rpComment').textContent = reportComment(t);
+
+  const max = Math.max(1, ...r.days.map((d) => d.min));
+  $('rpDays').innerHTML = '';
+  r.days.forEach((d) => {
+    const b = el('div', 'bar');
+    const i = el('i', d.min ? '' : 'zero'); i.style.height = (d.min ? Math.max(4, (d.min / max) * 100) : 2) + '%';
+    b.append(el('b', '', d.min + '분'), i, el('span', '', d.label));
+    $('rpDays').append(b);
+  });
+
+  const list = (root, rows, empty, make) => {
+    $(root).innerHTML = '';
+    if (!rows.length) { $(root).append(el('p', 'muted small', empty)); return; }
+    rows.forEach((x) => $(root).append(make(x)));
+  };
+  list('rpRecent', r.recent, '아직 학습 기록이 없어.', (x) => {
+    const row = el('div', 'hist'); const left = el('div', 't');
+    left.append(el('div', '', x.t), el('small', 'muted', `${shortDate(x.at)} · ${minText(x.sec)} · 미션 ${x.ok}/${x.m}`));
+    row.append(left, el('span', 'status ' + (x.r === '강제 종료' ? 'bad' : x.r === '완주' ? 'good' : ''), x.r));
+    return row;
+  });
+  list('rpQuiz', r.quizRecent, '아직 채점한 퀴즈가 없어.', (x) => {
+    const row = el('div', 'hist'); const left = el('div', 't');
+    left.append(el('div', '', x.t), el('small', 'muted', shortDate(x.at)));
+    const sc = x.n ? Math.round((x.c / x.n) * 100) : 0;
+    row.append(left, el('span', 'status ' + (sc >= 80 ? 'good' : sc < 50 ? 'bad' : 'warn'), `${x.c}/${x.n} 정답`));
+    return row;
+  });
+  list('rpWrong', r.wrongOpen, '복습할 오답이 없어.', (x) => {
+    const box = el('div', 'review-item');
+    box.append(el('small', '', x.t || '이전 학습'), el('p', '', x.q), el('p', 'answer-line', '정답: ' + x.a));
+    return box;
+  });
+
+  // 보호자 연결
+  $('guardianCode').textContent = r.code;
+  if (document.activeElement !== $('sheetUrlInput')) $('sheetUrlInput').value = r.sheetUrl;
+  if (r.sheetUrl) {
+    $('guardianLink').value = `${r.sheetUrl}?id=${encodeURIComponent(r.username)}&code=${r.code}`;
+    $('sheetState').textContent = r.pending ? `연결됨 · 보낼 기록 ${r.pending}개` : '연결됨';
+    $('sheetState').className = 'status ' + (r.pending ? 'warn' : 'good');
+  } else {
+    $('guardianLink').value = '';
+    $('guardianLink').placeholder = '아래 구글 시트 설정에서 연결 주소를 먼저 넣어 줘';
+    $('sheetState').textContent = '연결 안 됨';
+    $('sheetState').className = 'status';
+  }
+}
+
+function msg(id, text, kind = '') { $(id).hidden = false; $(id).className = 'notice mt ' + kind; $(id).textContent = text; }
+$('copyLinkBtn').addEventListener('click', async () => {
+  const link = $('guardianLink').value;
+  if (!link) { msg('linkMsg', '구글 시트를 먼저 연결해 줘.', 'warn'); return; }
+  try { await navigator.clipboard.writeText(link); msg('linkMsg', '보호자 링크를 복사했어. 카카오톡이나 문자에 붙여 넣어 보내 줘.', 'good'); }
+  catch { $('guardianLink').select(); msg('linkMsg', '링크를 길게 눌러 복사해 줘.', 'warn'); }
+});
+$('shareLinkBtn').addEventListener('click', async () => {
+  const link = $('guardianLink').value;
+  if (!link) { msg('linkMsg', '구글 시트를 먼저 연결해 줘.', 'warn'); return; }
+  if (navigator.share) {
+    try { await navigator.share({ title: '집중ON 학습 현황', text: `${state.user?.name || ''} 학생의 집중ON 학습 현황이에요.`, url: link }); } catch { /* 취소 */ }
+  } else {
+    $('copyLinkBtn').click();
+  }
+});
+$('saveSheetBtn').addEventListener('click', async () => {
+  try {
+    await api('/api/sheet/url', { method: 'POST', body: { url: $('sheetUrlInput').value } });
+    msg('sheetMsg', $('sheetUrlInput').value.trim() ? '저장했어. 이제 학습 기록이 구글 시트로 자동 전송돼.' : '연결을 해제했어.', 'good');
+    refreshReport();
+  } catch (e) { msg('sheetMsg', e.message, 'bad'); }
+});
+$('resendBtn').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/sheet/resend', { method: 'POST' });
+    if (!$('sheetUrlInput').value.trim()) { msg('sheetMsg', '구글 시트 연결 주소를 먼저 저장해 줘.', 'warn'); return; }
+    msg('sheetMsg', r.sent ? `기록 ${r.count}개를 구글 시트로 보냈어. 이미 있는 기록은 시트에서 한 번만 저장돼.` : '보내지 못했어. 인터넷 연결을 확인하고 다시 눌러 줘.', r.sent ? 'good' : 'warn');
+    refreshReport();
+  } catch (e) { msg('sheetMsg', e.message, 'bad'); }
 });
 
 /* ---------- 사이드바: 오답 / 기록 ---------- */
